@@ -29,6 +29,7 @@ class Utilisateur(Base):
    mot_de_passe = Column(String, nullable=False)
    nom = Column(String, nullable=False)
    role = Column(Enum(RoleType, name='role'), nullable=False)
+   adresse_livraison = Column(String, nullable=True)
    date_creation = Column(DateTime, default=datetime.now)
 
 
@@ -77,3 +78,25 @@ class LigneCommande(Base):
 
    def __repr__(self):
        return f"<LigneCommande(id='{self.id}', commande_id='{self.commande_id}',produit_id='{self.produit_id}', quantite='{self.quantite}', prix_unitaire='{self.prix_unitaire}')>"
+
+   class Panier(Base):
+      __tablename__ = 'panier'
+
+      id = Column(Integer, primary_key=True)
+      utilisateur_id = Column(Integer, ForeignKey('utilisateur.id'), nullable=False)
+      date_creation = Column(DateTime, default=datetime.now)
+
+      def __repr__(self):
+         return f"<Panier(id='{self.id}', utilisateur_id='{self.utilisateur_id}', date_creation='{self.date_creation}')>"
+
+
+   class LignePanier(Base):
+      __tablename__ = 'ligne_panier'
+
+      id = Column(Integer, primary_key=True)
+      panier_id = Column(Integer, ForeignKey('panier.id'), nullable=False)
+      produit_id = Column(Integer, ForeignKey('produit.id'), nullable=False)
+      quantite = Column(Integer, nullable=False)
+
+      def __repr__(self):
+         return f"<LignePanier(id='{self.id}', panier_id='{self.panier_id}', produit_id='{self.produit_id}', quantite='{self.quantite}')>"

@@ -80,6 +80,110 @@ def refresh():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# catalogue endpoints -------------------------------------------------------
+
+
+@app.route('/api/produits', methods=['GET'])
+def list_products():
+    """Return full catalogue. query args:
+        - categorie : filter by category (exact match)
+        - q         : search term for name/description
+
+    No authentication required; visitors and clients may browse.
+    """
+    try:
+        categorie = request.args.get('categorie')
+        search = request.args.get('q')
+        products = load_products_from_db(category=categorie, search=search)
+        return jsonify(products), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/produits', methods=['POST'])
+def create_product():
+    """Add a new product to the catalogue (admin only)."""
+    # check authorization header
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    # role guard
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+
+    try:
+        body = request.get_json()
+        new_prod = add_product_to_db(body)
+        return jsonify(new_prod), 201
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/produits/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    """Return a single product by id."""
+    try:
+        product = get_product_by_id(product_id)
+        if not product:
+            return jsonify({'error': 'Product not found.'}), 404
+        return jsonify(product), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/produits/<int:product_id>', methods=['PUT'])
+def update_product(product_id):
+    """Modify an existing product (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+
+    try:
+        body = request.get_json()
+        updated = update_product_in_db(product_id, body)
+        if updated is None:
+            return jsonify({'error': 'Product not found.'}), 404
+        return jsonify(updated), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/produits/<int:product_id>', methods=['DELETE'])
+def delete_product(product_id):
+    """Delete a product (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+
+    try:
+        success = delete_product_in_db(product_id)
+        if not success:
+            return jsonify({'error': 'Product not found.'}), 404
+        return jsonify({}), 204
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 def check_fields(body, fields):
     required_parameters_set = set(fields)
     fields_set = set(body.keys())

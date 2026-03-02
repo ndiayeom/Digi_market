@@ -154,3 +154,107 @@ def verify_refresh_token(token, secret=None):
    except jwt.InvalidTokenError as e:
       print('JWT refresh verification failed:', str(e))
       return None
+
+
+# product/catalog helpers --------------------------------------------------
+
+def _product_to_dict(p):
+    """serialize a Produit ORM instance to a plain dict"""
+    return {
+        'id': p.id,
+        'nom': p.nom,
+        'description': p.description,
+        'categorie': p.categorie,
+        'prix': p.prix,
+        'quantite_stock': p.quantite_stock,
+        'date_creation': p.date_creation.isoformat() if getattr(p, 'date_creation', None) else None
+    }
+
+
+def load_products_from_db(category=None, search=None):
+    """Return a list of products optionally filtered by category or search term.
+
+    Visitors and clients will call this to browse the full catalogue.
+    """
+    query = session.query(Produit)
+    if category:
+        query = query.filter_by(categorie=category)
+    if search:
+        # simple case‑insensitive substring search on name/description
+        like_term = f"%{search}%"
+        query = query.filter(
+            Produit.nom.ilike(like_term) | Produit.description.ilike(like_term)
+        )
+    prods = query.all()
+    return [_product_to_dict(p) for p in prods]
+
+
+def get_product_by_id(product_id):
+    p = session.query(Produit).filter_by(id=product_id).first()
+    if not p:
+        return None
+    return _product_to_dict(p)
+
+
+def add_product_to_db(data):
+    """Create a new product entry from a dict and return its serialized form.
+
+    Expected keys: nom, description, categorie, prix, quantite_stock
+    """
+    # basic field check
+    required = {'nom', 'description', 'categorie', 'prix', 'quantite_stock'}
+    if not isinstance(data, dict) or not required <= set(data.keys()):
+        raise ValueError("Missing product fields")
+
+    # coerce types
+    prix = float(data.get('prix'))
+    quant = int(data.get('quantite_stock'))
+
+    p = Produit(
+        nom=data.get('nom'),
+        description=data.get('description'),
+        categorie=data.get('categorie'),
+        prix=prix,
+        quantite_stock=quant
+    )
+    session.add(p)
+    session.commit()
+    return _product_to_dict(p)
+
+
+def update_product_in_db(product_id, data):
+    """Update fields of an existing product.
+
+    `data` may contain any of nom, description, categorie, prix, quantite_stock.
+    Returns serialized product or None if not found.
+    Raises ValueError if payload is invalid.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+    p = session.query(Produit).filter_by(id=product_id).first()
+    if not p:
+        return None
+    # update allowed attributes
+    if 'nom' in data:
+        p.nom = data['nom']
+    if 'description' in data:
+        p.description = data['description']
+    if 'categorie' in data:
+        p.categorie = data['categorie']
+    if 'prix' in data:
+        p.prix = float(data['prix'])
+    if 'quantite_stock' in data:
+        p.quantite_stock = int(data['quantite_stock'])
+    session.add(p)
+    session.commit()
+    return _product_to_dict(p)
+
+
+def delete_product_in_db(product_id):
+    """Remove a product by id. Returns True if deleted, False if not found."""
+    p = session.query(Produit).filter_by(id=product_id).first()
+    if not p:
+        return False
+    session.delete(p)
+    session.commit()
+    return True

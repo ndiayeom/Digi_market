@@ -1,0 +1,30 @@
+curl -i http://127.0.0.1:5000//api/auth/users
+
+curl -X POST http://127.0.0.1:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user4@gmail.com","mot_de_passe":"user3","nom":"JP Morgan","role":"client"}'                
+
+curl -X POST http://127.0.0.1:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user2@gmail.com","mot_de_passe":"user2","nom":"USER2 LEMOINE","role":"client"}'                
+
+curl -X POST http://127.0.0.1:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user5@gmail.com","mot_de_passe":"user5","nom":"GUNMA XUMAN","role":"client"}'  
+
+# login -> obtenir token
+curl -s -X POST http://127.0.0.1:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user5@gmail.com","mot_de_passe":"user5"}'
+
+curl -i -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1Iiwicm9sZSI6ImNsaWVudCIsInR5cGUiOiJyZWZyZXNoIiwiaWF0IjoxNzcyMzMzNzAzLCJleHAiOjE3NzI5Mzg1MDN9.19rbthigHPEbh51bXFrUq3nXU1wPpDAA_bjo9gxiDPk" http://127.0.0.1:5000/api/auth/users
+
+
+ liste complète
+curl http://127.0.0.1:5000/api/produits
+
+# filtrer sur la catégorie
+curl "http://127.0.0.1:5000/api/produits?categorie=meubles"
+
+# recherche textuelle
+curl "http://127.0.0.1:5000/api/produits?q=lampe"
