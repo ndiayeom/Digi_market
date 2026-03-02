@@ -28,3 +28,11 @@ curl "http://127.0.0.1:5000/api/produits?categorie=meubles"
 
 # recherche textuelle
 curl "http://127.0.0.1:5000/api/produits?q=lampe"
+ ajout
+curl -X POST http://127.0.0.1:5000/api/panier \
+  -H "Authorization: Bearer <CLIENT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"produit_id":1,"quantite":3}'
+
+# vue
+curl -H "Authorization: Bearer <CLIENT_TOKEN>" http://127.0.0.1:5000/api/panier

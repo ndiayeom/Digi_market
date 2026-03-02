@@ -81,6 +81,33 @@ def refresh():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/auth/me', methods=['PATCH'])
+def update_my_address():
+    """Allow a client to specify or change their delivery address."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    # only clients should hit this
+    if payload.get('role') != 'client':
+        return jsonify({'error': 'Client role required'}), 403
+
+    try:
+        body = request.get_json()
+        adresse = body.get('adresse_livraison')
+        user = update_user_address(payload.get('sub'), adresse)
+        if user is None:
+            return jsonify({'error': 'User not found.'}), 404
+        return jsonify(user), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # catalogue endpoints -------------------------------------------------------
 
 
@@ -181,6 +208,231 @@ def delete_product(product_id):
         if not success:
             return jsonify({'error': 'Product not found.'}), 404
         return jsonify({}), 204
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/commandes', methods=['POST'])
+def create_commande():
+    """Create a new order.
+
+    Clients may create orders for themselves. Admins may create an order for
+    any user by providing `utilisateur_id` in the request body.
+    """
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    role = payload.get('role')
+    if role not in ('client', 'admin'):
+        return jsonify({'error': 'User role not authorized to create orders'}), 403
+
+    try:
+        body = request.get_json() or {}
+        adresse = body.get('adresse_livraison')
+        lignes = body.get('lignes')
+        if role == 'client':
+            user_id = payload.get('sub')
+        else:
+            # admin must specify target user
+            user_id = body.get('utilisateur_id')
+            if user_id is None:
+                return jsonify({'error': 'Missing utilisateur_id for admin order'}), 400
+        order = create_order(user_id, adresse, lignes)
+        return jsonify(order), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/commandes', methods=['GET'])
+def list_orders():
+    """Return orders depending on role: client gets own, admin sees all."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    role = payload.get('role')
+    try:
+        if role == 'admin':
+            orders = load_all_orders()
+        elif role == 'client':
+            orders = load_orders_for_user(payload.get('sub'))
+        else:
+            return jsonify({'error': 'Unauthorized role'}), 403
+        return jsonify(orders), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/commandes/<int:order_id>', methods=['GET'])
+def get_order(order_id):
+    """Retrieve a specific order for the authenticated user.
+
+    Clients may only fetch their own orders. Admins may fetch any order.
+    """
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    role = payload.get('role')
+    if role not in ('client', 'admin'):
+        return jsonify({'error': 'Unauthorized role'}), 403
+    try:
+        order = get_order_by_id(order_id)
+        if not order:
+            return jsonify({'error': 'Order not found.'}), 404
+        if role == 'client':
+            # clients can only view their own orders
+            if str(order.get('utilisateur_id')) != str(payload.get('sub')):
+                return jsonify({'error': 'Order not found.'}), 404
+        # admins bypass ownership check
+        return jsonify(order), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# admin endpoints ---------------------------------------------------------
+@app.route('/api/admin/commandes', methods=['GET'])
+def list_all_orders():
+    """Return every order on the platform (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    try:
+        orders = load_all_orders()
+        return jsonify(orders), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/commandes/<int:order_id>', methods=['GET'])
+def admin_get_order(order_id):
+    """Return details of a single order (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    try:
+        order = get_order_by_id(order_id)
+        if not order:
+            return jsonify({'error': 'Order not found.'}), 404
+        return jsonify(order), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/commandes/<int:order_id>/status', methods=['PATCH'])
+def admin_update_order_status(order_id):
+    """Change order statut (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    try:
+        body = request.get_json() or {}
+        new_stat = body.get('statut')
+        updated = update_order_status(order_id, new_stat)
+        if updated is None:
+            return jsonify({'error': 'Order not found.'}), 404
+        return jsonify(updated), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# unified path for admin status change
+@app.route('/api/commandes/<int:order_id>', methods=['PATCH'])
+def admin_patch_order(order_id):
+    """Modify order status via unified route (admin only)."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'admin':
+        return jsonify({'error': 'Admin privileges required'}), 403
+    try:
+        body = request.get_json() or {}
+        new_stat = body.get('statut')
+        updated = update_order_status(order_id, new_stat)
+        if updated is None:
+            return jsonify({'error': 'Order not found.'}), 404
+        return jsonify(updated), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/panier', methods=['POST'])
+def add_cart_item():
+    """Add a product to the authenticated client's cart."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'client':
+        return jsonify({'error': 'Client role required'}), 403
+    try:
+        body = request.get_json()
+        prod_id = body.get('produit_id')
+        quant = body.get('quantite')
+        cart = add_to_cart(payload.get('sub'), int(prod_id), int(quant))
+        return jsonify(cart), 200
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/panier', methods=['GET'])
+def view_cart():
+    """Return the current user's cart."""
+    auth = request.headers.get('Authorization')
+    if not auth or not auth.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid Authorization header'}), 401
+    token = auth.split(' ', 1)[1]
+    payload = verify_access_token(token, secret=app.config.get('SECRET_KEY'))
+    if not payload:
+        return jsonify({'error': 'Invalid or expired token'}), 401
+    if payload.get('role') != 'client':
+        return jsonify({'error': 'Client role required'}), 403
+    try:
+        cart = get_or_create_cart(payload.get('sub'))
+        return jsonify(cart_to_dict(cart)), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

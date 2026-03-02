@@ -258,3 +258,172 @@ def delete_product_in_db(product_id):
     session.delete(p)
     session.commit()
     return True
+
+
+# cart helpers -------------------------------------------------------------
+
+def cart_to_dict(cart):
+    lignes = session.query(LignePanier).filter_by(panier_id=cart.id).all()
+    return {
+        'id': cart.id,
+        'utilisateur_id': cart.utilisateur_id,
+        'date_creation': cart.date_creation.isoformat() if getattr(cart, 'date_creation', None) else None,
+        'lignes': [
+            {'id': l.id, 'produit_id': l.produit_id, 'quantite': l.quantite}
+            for l in lignes
+        ]
+    }
+
+
+def get_or_create_cart(user_id):
+    c = session.query(Panier).filter_by(utilisateur_id=user_id).first()
+    if c:
+        return c
+    c = Panier(utilisateur_id=user_id)
+    session.add(c)
+    session.commit()
+    return c
+
+
+def add_to_cart(user_id, produit_id, quantite):
+    if quantite <= 0:
+        raise ValueError("Quantity must be positive")
+    prod = session.query(Produit).filter_by(id=produit_id).first()
+    if not prod:
+        raise ValueError("Produit not found")
+    cart = get_or_create_cart(user_id)
+    line = session.query(LignePanier).filter_by(panier_id=cart.id, produit_id=produit_id).first()
+    if line:
+        line.quantite += quantite
+    else:
+        line = LignePanier(panier_id=cart.id, produit_id=produit_id, quantite=quantite)
+        session.add(line)
+    session.commit()
+    return cart_to_dict(cart)
+
+# order helpers ------------------------------------------------------------
+
+def _commande_to_dict(c):
+    """serialize a Commande instance, including its lignes."""
+    lignes = session.query(LigneCommande).filter_by(commande_id=c.id).all()
+    return {
+        'id': c.id,
+        'utilisateur_id': c.utilisateur_id,
+        'adresse_livraison': c.adresse_livraison,
+        'date_commande': c.date_commande.isoformat() if getattr(c, 'date_commande', None) else None,
+        'statut': c.statut.value if c.statut is not None else None,
+        'lignes': [
+            {
+                'id': l.id,
+                'produit_id': l.produit_id,
+                'quantite': l.quantite,
+                'prix_unitaire': l.prix_unitaire
+            } for l in lignes
+        ]
+    }
+
+
+def create_order(user_id, adresse_livraison, lignes):
+    """Create a Commande and associated LigneCommande records.
+
+    `user_id` should be a string or int; `lignes` is a list of dicts with
+    produit_id and quantite.  Returns serialized commande.
+    Raises ValueError on bad payload or if the user cannot be found.
+    """
+    # verify target user exists
+    try:
+        uid_int = int(user_id)
+    except Exception:
+        raise ValueError("Invalid utilisateur_id")
+    user = session.query(Utilisateur).filter_by(id=uid_int).first()
+    if not user:
+        raise ValueError("Utilisateur not found")
+
+    if not adresse_livraison or not isinstance(lignes, list) or len(lignes) == 0:
+        raise ValueError("Invalid order data")
+    c = Commande(
+        utilisateur_id=uid_int,
+        adresse_livraison=adresse_livraison,
+        statut=StatutType.EN_ATTENTE
+    )
+    session.add(c)
+    session.commit()  # flush to get c.id
+
+    for item in lignes:
+        if not isinstance(item, dict) or 'produit_id' not in item or 'quantite' not in item:
+            raise ValueError("Invalid ligne")
+        prod = session.query(Produit).filter_by(id=item['produit_id']).first()
+        if not prod:
+            raise ValueError(f"Produit {item['produit_id']} not found")
+        quant = int(item['quantite'])
+        lc = LigneCommande(
+            commande_id=c.id,
+            produit_id=prod.id,
+            quantite=quant,
+            prix_unitaire=prod.prix
+        )
+        session.add(lc)
+    session.commit()
+    return _commande_to_dict(c)
+
+
+def update_user_address(user_id, adresse):
+    """Set the delivery address for a user, return serialized user or None."""
+    if not adresse or not isinstance(adresse, str):
+        raise ValueError("Invalid address")
+    u = session.query(Utilisateur).filter_by(id=user_id).first()
+    if not u:
+        return None
+    u.adresse_livraison = adresse
+    session.add(u)
+    session.commit()
+    return {
+        'id': u.id,
+        'email': u.email,
+        'nom': u.nom,
+        'role': u.role.value if u.role is not None else None,
+        'adresse_livraison': u.adresse_livraison,
+        'date_creation': u.date_creation.isoformat() if getattr(u, 'date_creation', None) else None
+    }
+
+
+def load_orders_for_user(user_id):
+    """Return list of orders belonging to given user."""
+    cmds = session.query(Commande).filter_by(utilisateur_id=user_id).all()
+    return [_commande_to_dict(c) for c in cmds]
+
+
+def load_all_orders():
+    """Return all orders in the system."""
+    cmds = session.query(Commande).all()
+    return [_commande_to_dict(c) for c in cmds]
+
+
+def get_order_by_id(order_id):
+    """Return serialized order or None if not found."""
+    c = session.query(Commande).filter_by(id=order_id).first()
+    if not c:
+        return None
+    return _commande_to_dict(c)
+
+
+def update_order_status(order_id, statut_value):
+    """Change the statut of a command and return serialized order.
+
+    `statut_value` should be one of the StatutType values (string or enum).
+    Returns None if order not found; raises ValueError for invalid statut.
+    """
+    c = session.query(Commande).filter_by(id=order_id).first()
+    if not c:
+        return None
+    try:
+        if isinstance(statut_value, StatutType):
+            new_stat = statut_value
+        else:
+            new_stat = StatutType(statut_value)
+    except Exception:
+        raise ValueError("Invalid statut")
+    c.statut = new_stat
+    session.add(c)
+    session.commit()
+    return _commande_to_dict(c)
